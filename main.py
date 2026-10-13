@@ -1,19 +1,14 @@
 # ============================================================
 # PERSONAL TELEGRAM COLLECTIBLE USERNAME TOOL
-#
+# File: main.py
 # Python 3.10+
-#
-# Telegram user account:
-#   API_ID + API_HASH + PHONE_NUMBER
-#
-# Telegram control bot:
-#   BOT_TOKEN
+# Render Web Service compatible
 #
 # IMPORTANT:
 # - This does NOT bypass Fragment.
 # - This does NOT mint fake collectible usernames.
 # - A collectible must legitimately belong to your account.
-# - Only OWNER_USER_ID can use the bot.
+# - Only OWNER_USER_ID can control the bot.
 # ============================================================
 
 import os
@@ -21,7 +16,9 @@ import re
 import asyncio
 import secrets
 import logging
+import threading
 from pathlib import Path
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from dotenv import load_dotenv
 
@@ -31,7 +28,6 @@ from telethon.tl.functions.account import (
     ToggleUsernameRequest,
     ReorderUsernamesRequest,
 )
-
 from telethon.errors import RPCError
 
 from telegram import Update
@@ -49,51 +45,110 @@ from database import (
 
 
 # ============================================================
-# CONFIG
+# PATHS / ENVIRONMENT
 # ============================================================
 
 BASE_DIR = Path(__file__).resolve().parent
 SESSION_DIR = BASE_DIR / "session"
 
-SESSION_DIR.mkdir(exist_ok=True)
+SESSION_DIR.mkdir(
+    parents=True,
+    exist_ok=True,
+)
 
 load_dotenv(BASE_DIR / ".env")
 
 
-API_ID_RAW = os.getenv("API_ID", "").strip()
-API_HASH = os.getenv("API_HASH", "").strip()
-PHONE_NUMBER = os.getenv("PHONE_NUMBER", "").strip()
+# ============================================================
+# CONFIG
+# ============================================================
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
-OWNER_USER_ID_RAW = os.getenv("OWNER_USER_ID", "").strip()
+API_ID_RAW = os.getenv(
+    "API_ID",
+    "",
+).strip()
 
+API_HASH = os.getenv(
+    "API_HASH",
+    "",
+).strip()
+
+PHONE_NUMBER = os.getenv(
+    "PHONE_NUMBER",
+    "",
+).strip()
+
+BOT_TOKEN = os.getenv(
+    "BOT_TOKEN",
+    "",
+).strip()
+
+OWNER_USER_ID_RAW = os.getenv(
+    "OWNER_USER_ID",
+    "",
+).strip()
+
+PORT_RAW = os.getenv(
+    "PORT",
+    "10000",
+).strip()
+
+
+# ============================================================
+# VALIDATE CONFIG
+# ============================================================
 
 if not API_ID_RAW:
-    raise RuntimeError("API_ID is missing in .env")
+    raise RuntimeError(
+        "API_ID is missing."
+    )
 
 if not API_HASH:
-    raise RuntimeError("API_HASH is missing in .env")
+    raise RuntimeError(
+        "API_HASH is missing."
+    )
 
 if not PHONE_NUMBER:
-    raise RuntimeError("PHONE_NUMBER is missing in .env")
+    raise RuntimeError(
+        "PHONE_NUMBER is missing."
+    )
 
 if not BOT_TOKEN:
-    raise RuntimeError("BOT_TOKEN is missing in .env")
+    raise RuntimeError(
+        "BOT_TOKEN is missing."
+    )
 
 if not OWNER_USER_ID_RAW:
-    raise RuntimeError("OWNER_USER_ID is missing in .env")
+    raise RuntimeError(
+        "OWNER_USER_ID is missing."
+    )
 
 
 try:
     API_ID = int(API_ID_RAW)
+
 except ValueError:
-    raise RuntimeError("API_ID must be a number")
+    raise RuntimeError(
+        "API_ID must be a number."
+    )
 
 
 try:
-    OWNER_USER_ID = int(OWNER_USER_ID_RAW)
+    OWNER_USER_ID = int(
+        OWNER_USER_ID_RAW
+    )
+
 except ValueError:
-    raise RuntimeError("OWNER_USER_ID must be a number")
+    raise RuntimeError(
+        "OWNER_USER_ID must be a number."
+    )
+
+
+try:
+    PORT = int(PORT_RAW)
+
+except ValueError:
+    PORT = 10000
 
 
 # ============================================================
@@ -101,18 +156,124 @@ except ValueError:
 # ============================================================
 
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    format=(
+        "%(asctime)s - "
+        "%(name)s - "
+        "%(levelname)s - "
+        "%(message)s"
+    ),
     level=logging.INFO,
 )
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(
+    __name__
+)
+
+
+# ============================================================
+# RENDER WEB SERVER
+# ============================================================
+
+class HealthHandler(
+    BaseHTTPRequestHandler
+):
+
+    def do_GET(self):
+
+        if self.path in (
+            "/",
+            "/health",
+            "/healthz",
+        ):
+
+            body = (
+                b"Telegram Username Tool is running."
+            )
+
+            self.send_response(200)
+
+            self.send_header(
+                "Content-Type",
+                "text/plain; charset=utf-8",
+            )
+
+            self.send_header(
+                "Content-Length",
+                str(len(body)),
+            )
+
+            self.end_headers()
+
+            self.wfile.write(
+                body
+            )
+
+            return
+
+        body = b"Not Found"
+
+        self.send_response(404)
+
+        self.send_header(
+            "Content-Type",
+            "text/plain; charset=utf-8",
+        )
+
+        self.send_header(
+            "Content-Length",
+            str(len(body)),
+        )
+
+        self.end_headers()
+
+        self.wfile.write(
+            body
+        )
+
+    def log_message(
+        self,
+        format,
+        *args,
+    ):
+        return
+
+
+def start_web_server():
+
+    try:
+
+        server = ThreadingHTTPServer(
+            (
+                "0.0.0.0",
+                PORT,
+            ),
+            HealthHandler,
+        )
+
+        logger.info(
+            "Render HTTP server listening "
+            "on 0.0.0.0:%s",
+            PORT,
+        )
+
+        server.serve_forever()
+
+    except Exception:
+        logger.exception(
+            "HTTP server crashed."
+        )
+
+        raise
 
 
 # ============================================================
 # TELEGRAM USER SESSION
 # ============================================================
 
-SESSION_FILE = SESSION_DIR / "personal_account"
+SESSION_FILE = (
+    SESSION_DIR
+    / "personal_account"
+)
 
 user_client = TelegramClient(
     str(SESSION_FILE),
@@ -125,25 +286,34 @@ user_client = TelegramClient(
 # SECURITY
 # ============================================================
 
-def owner_only(update: Update) -> bool:
-    """
-    Only the Telegram user whose numeric ID is in
-    OWNER_USER_ID can control the account.
-    """
+def owner_only(
+    update: Update,
+) -> bool:
 
     if not update.effective_user:
         return False
 
-    return update.effective_user.id == OWNER_USER_ID
+    return (
+        update.effective_user.id
+        == OWNER_USER_ID
+    )
 
 
-async def deny_if_not_owner(update: Update) -> bool:
+async def deny_if_not_owner(
+    update: Update,
+) -> bool:
+
     if owner_only(update):
         return False
 
     if update.effective_message:
-        await update.effective_message.reply_text(
-            "⛔ You are not authorized to use this bot."
+
+        await (
+            update.effective_message
+            .reply_text(
+                "⛔ You are not authorized "
+                "to use this bot."
+            )
         )
 
     return True
@@ -158,7 +328,10 @@ USERNAME_PATTERN = re.compile(
 )
 
 
-def clean_username(value: str) -> str:
+def clean_username(
+    value: str,
+) -> str:
+
     value = value.strip()
 
     if value.startswith("@"):
@@ -167,44 +340,85 @@ def clean_username(value: str) -> str:
     return value
 
 
-def valid_username(username: str) -> bool:
+def valid_username(
+    username: str,
+) -> bool:
+
     return bool(
-        USERNAME_PATTERN.fullmatch(username)
+        USERNAME_PATTERN.fullmatch(
+            username
+        )
     )
 
 
-def telegram_link(username: str) -> str:
-    return f"https://t.me/{username}"
+def telegram_link(
+    username: str,
+) -> str:
+
+    return (
+        f"https://t.me/{username}"
+    )
 
 
 # ============================================================
-# USER ACCOUNT
+# TELEGRAM USER ACCOUNT HELPERS
 # ============================================================
 
 async def get_me():
+
     return await user_client.get_me()
 
 
 def get_username_lists(me):
-    normal = getattr(me, "username", None)
+
+    normal = getattr(
+        me,
+        "username",
+        None,
+    )
 
     active = []
     inactive = []
 
-    usernames = getattr(me, "usernames", None) or []
+    usernames = (
+        getattr(
+            me,
+            "usernames",
+            None,
+        )
+        or []
+    )
 
     for item in usernames:
-        username = getattr(item, "username", None)
+
+        username = getattr(
+            item,
+            "username",
+            None,
+        )
 
         if not username:
             continue
 
-        if getattr(item, "active", False):
-            active.append(username)
-        else:
-            inactive.append(username)
+        if getattr(
+            item,
+            "active",
+            False,
+        ):
+            active.append(
+                username
+            )
 
-    return normal, active, inactive
+        else:
+            inactive.append(
+                username
+            )
+
+    return (
+        normal,
+        active,
+        inactive,
+    )
 
 
 # ============================================================
@@ -216,33 +430,50 @@ async def start_command(
     context: ContextTypes.DEFAULT_TYPE,
 ):
 
-    if await deny_if_not_owner(update):
+    if await deny_if_not_owner(
+        update
+    ):
         return
 
     text = (
         "🤖 *Personal Telegram Username Tool*\n\n"
-        "Your bot is connected to your Telegram "
-        "user account.\n\n"
-        "*Commands:*\n\n"
+
+        "Your control bot is connected to your "
+        "Telegram user account.\n\n"
+
+        "*Commands*\n\n"
+
         "/createuser name\n"
-        "Generate ONE candidate and check it.\n\n"
+        "Generate one username candidate and "
+        "check ordinary Telegram availability.\n\n"
+
         "/myusernames\n"
-        "Show your usernames.\n\n"
+        "Show usernames currently attached "
+        "to your account.\n\n"
+
         "/activate username\n"
-        "Activate an owned collectible.\n\n"
+        "Activate an owned username.\n\n"
+
         "/deactivate username\n"
-        "Deactivate an owned collectible.\n\n"
+        "Deactivate an owned username.\n\n"
+
         "/reorder name1 name2 ...\n"
         "Reorder active usernames.\n\n"
+
         "/info username\n"
-        "Show collectible information if available.\n\n"
+        "Request collectible information "
+        "when supported.\n\n"
+
         "/history\n"
         "Show recent username checks."
     )
 
-    await update.effective_message.reply_text(
-        text,
-        parse_mode="Markdown",
+    await (
+        update.effective_message
+        .reply_text(
+            text,
+            parse_mode="Markdown",
+        )
     )
 
 
@@ -255,72 +486,122 @@ async def myusernames_command(
     context: ContextTypes.DEFAULT_TYPE,
 ):
 
-    if await deny_if_not_owner(update):
+    if await deny_if_not_owner(
+        update
+    ):
         return
 
     try:
+
         me = await get_me()
 
-        normal, active, inactive = get_username_lists(me)
+        (
+            normal,
+            active,
+            inactive,
+        ) = get_username_lists(
+            me
+        )
 
         lines = [
             "👤 *YOUR TELEGRAM ACCOUNT*",
             "",
-            f"Name: {me.first_name or ''}".strip(),
+            (
+                f"Name: "
+                f"{me.first_name or ''} "
+                f"{me.last_name or ''}"
+            ).strip(),
             f"ID: `{me.id}`",
             "",
         ]
 
         if normal:
+
             lines.append(
-                f"Normal username: @{normal}"
+                f"Normal username: "
+                f"@{normal}"
             )
+
         else:
+
             lines.append(
                 "Normal username: None"
             )
 
         lines.append("")
-        lines.append("🟢 *Active usernames:*")
+        lines.append(
+            "🟢 *Active usernames:*"
+        )
 
         if active:
+
             for username in active:
+
                 lines.append(
                     f"• @{username}\n"
-                    f"  {telegram_link(username)}"
+                    f"  "
+                    f"{telegram_link(username)}"
                 )
+
         else:
-            lines.append("• None")
+
+            lines.append(
+                "• None"
+            )
 
         lines.append("")
-        lines.append("⚪ *Inactive usernames:*")
+        lines.append(
+            "⚪ *Inactive usernames:*"
+        )
 
         if inactive:
+
             for username in inactive:
+
                 lines.append(
                     f"• @{username}"
                 )
-        else:
-            lines.append("• None")
 
-        await update.effective_message.reply_text(
-            "\n".join(lines),
-            parse_mode="Markdown",
+        else:
+
+            lines.append(
+                "• None"
+            )
+
+        await (
+            update.effective_message
+            .reply_text(
+                "\n".join(lines),
+                parse_mode="Markdown",
+                disable_web_page_preview=True,
+            )
         )
 
     except Exception as error:
-        await update.effective_message.reply_text(
-            f"❌ Error:\n{error}"
+
+        logger.exception(
+            "/myusernames failed"
+        )
+
+        await (
+            update.effective_message
+            .reply_text(
+                f"❌ Error:\n{error}"
+            )
         )
 
 
 # ============================================================
-# GENERATE ONE CANDIDATE
+# GENERATE CANDIDATE
 # ============================================================
 
-def generate_candidate(base: str) -> str:
+def generate_candidate(
+    base: str,
+) -> str:
 
-    base = clean_username(base)
+    base = clean_username(
+        base
+    )
 
     base = re.sub(
         r"[^A-Za-z0-9_]",
@@ -334,7 +615,10 @@ def generate_candidate(base: str) -> str:
     base = base[:24]
 
     choices = [
-        f"{base}{secrets.randbelow(90) + 10}",
+        (
+            f"{base}"
+            f"{secrets.randbelow(90) + 10}"
+        ),
         f"{base}_dev",
         f"{base}_tech",
         f"{base}_ng",
@@ -342,34 +626,29 @@ def generate_candidate(base: str) -> str:
         f"mr_{base}",
     ]
 
-    candidate = secrets.choice(choices)
+    candidate = secrets.choice(
+        choices
+    )
 
     candidate = candidate[:32]
 
-    if len(candidate) < 5:
-        candidate += "01"
+    while len(candidate) < 5:
+        candidate += "0"
 
     return candidate
 
 
 # ============================================================
-# CHECK USERNAME
+# TELEGRAM USERNAME CHECK
 # ============================================================
 
-async def telegram_check(username: str):
-    """
-    Uses Telegram's account.checkUsername.
-
-    This checks normal username availability.
-
-    IMPORTANT:
-    AVAILABLE here does NOT mean that the name is a
-    Fragment collectible.
-    """
+async def telegram_check(
+    username: str,
+):
 
     result = await user_client(
         CheckUsernameRequest(
-            username
+            username=username
         )
     )
 
@@ -385,36 +664,59 @@ async def createuser_command(
     context: ContextTypes.DEFAULT_TYPE,
 ):
 
-    if await deny_if_not_owner(update):
+    if await deny_if_not_owner(
+        update
+    ):
         return
 
     if not context.args:
-        await update.effective_message.reply_text(
-            "Usage:\n\n"
-            "/createuser mrdarkdev"
+
+        await (
+            update.effective_message
+            .reply_text(
+                "Usage:\n\n"
+                "/createuser mrdarkdev"
+            )
         )
+
         return
 
     base = context.args[0]
 
-    candidate = generate_candidate(base)
+    candidate = generate_candidate(
+        base
+    )
 
-    if not valid_username(candidate):
-        await update.effective_message.reply_text(
-            "❌ Generated username was invalid."
+    if not valid_username(
+        candidate
+    ):
+
+        await (
+            update.effective_message
+            .reply_text(
+                "❌ Generated username "
+                "was invalid."
+            )
         )
+
         return
 
-    message = await update.effective_message.reply_text(
-        f"🔎 Checking @{candidate}..."
+    message = await (
+        update.effective_message
+        .reply_text(
+            f"🔎 Checking "
+            f"@{candidate}..."
+        )
     )
 
     try:
+
         available = await telegram_check(
             candidate
         )
 
         if available:
+
             status = "AVAILABLE"
 
             save_candidate(
@@ -424,14 +726,24 @@ async def createuser_command(
 
             text = (
                 "✅ *USERNAME AVAILABLE*\n\n"
-                f"Username: `@{candidate}`\n"
-                "Type: Ordinary Telegram username\n\n"
-                f"🔗 {telegram_link(candidate)}\n\n"
-                "⚠️ This does *not* mean it is a "
-                "collectible username."
+
+                f"Username: "
+                f"`@{candidate}`\n\n"
+
+                "Type: Ordinary Telegram "
+                "username\n\n"
+
+                f"🔗 "
+                f"{telegram_link(candidate)}"
+                "\n\n"
+
+                "⚠️ Availability does not mean "
+                "the username is a Fragment "
+                "collectible."
             )
 
         else:
+
             status = "TAKEN"
 
             save_candidate(
@@ -441,16 +753,24 @@ async def createuser_command(
 
             text = (
                 "❌ *USERNAME UNAVAILABLE*\n\n"
+
                 f"@{candidate}\n\n"
-                "Telegram did not make it available."
+
+                "Telegram did not make this "
+                "username available."
             )
 
         await message.edit_text(
             text,
             parse_mode="Markdown",
+            disable_web_page_preview=True,
         )
 
     except RPCError as error:
+
+        logger.exception(
+            "Telegram username check failed"
+        )
 
         save_candidate(
             candidate,
@@ -458,7 +778,19 @@ async def createuser_command(
         )
 
         await message.edit_text(
-            "❌ Telegram returned an error:\n\n"
+            "❌ Telegram returned an error:"
+            "\n\n"
+            f"{error}"
+        )
+
+    except Exception as error:
+
+        logger.exception(
+            "/createuser failed"
+        )
+
+        await message.edit_text(
+            "❌ Error:\n\n"
             f"{error}"
         )
 
@@ -472,19 +804,39 @@ async def activate_command(
     context: ContextTypes.DEFAULT_TYPE,
 ):
 
-    if await deny_if_not_owner(update):
+    if await deny_if_not_owner(
+        update
+    ):
         return
 
     if not context.args:
-        await update.effective_message.reply_text(
-            "Usage:\n\n"
-            "/activate username"
+
+        await (
+            update.effective_message
+            .reply_text(
+                "Usage:\n\n"
+                "/activate username"
+            )
         )
+
         return
 
     username = clean_username(
         context.args[0]
     )
+
+    if not valid_username(
+        username
+    ):
+
+        await (
+            update.effective_message
+            .reply_text(
+                "❌ Invalid username."
+            )
+        )
+
+        return
 
     try:
 
@@ -496,24 +848,41 @@ async def activate_command(
         )
 
         if result:
-            await update.effective_message.reply_text(
-                "✅ *Activated*\n\n"
-                f"@{username}\n\n"
-                f"🔗 {telegram_link(username)}",
-                parse_mode="Markdown",
+
+            await (
+                update.effective_message
+                .reply_text(
+                    "✅ *Activated*\n\n"
+                    f"@{username}\n\n"
+                    f"🔗 "
+                    f"{telegram_link(username)}",
+                    parse_mode="Markdown",
+                    disable_web_page_preview=True,
+                )
             )
+
         else:
-            await update.effective_message.reply_text(
-                "❌ Telegram did not activate it."
+
+            await (
+                update.effective_message
+                .reply_text(
+                    "❌ Telegram did not "
+                    "activate it."
+                )
             )
 
     except RPCError as error:
 
-        await update.effective_message.reply_text(
-            "❌ Could not activate username.\n\n"
-            f"{error}\n\n"
-            "Make sure you actually own the collectible "
-            "and Telegram allows it to be activated."
+        await (
+            update.effective_message
+            .reply_text(
+                "❌ Could not activate "
+                "username.\n\n"
+                f"{error}\n\n"
+                "Make sure the username "
+                "belongs to your account and "
+                "Telegram allows it to be activated."
+            )
         )
 
 
@@ -526,19 +895,39 @@ async def deactivate_command(
     context: ContextTypes.DEFAULT_TYPE,
 ):
 
-    if await deny_if_not_owner(update):
+    if await deny_if_not_owner(
+        update
+    ):
         return
 
     if not context.args:
-        await update.effective_message.reply_text(
-            "Usage:\n\n"
-            "/deactivate username"
+
+        await (
+            update.effective_message
+            .reply_text(
+                "Usage:\n\n"
+                "/deactivate username"
+            )
         )
+
         return
 
     username = clean_username(
         context.args[0]
     )
+
+    if not valid_username(
+        username
+    ):
+
+        await (
+            update.effective_message
+            .reply_text(
+                "❌ Invalid username."
+            )
+        )
+
+        return
 
     try:
 
@@ -550,19 +939,34 @@ async def deactivate_command(
         )
 
         if result:
-            await update.effective_message.reply_text(
-                f"✅ @{username} deactivated."
+
+            await (
+                update.effective_message
+                .reply_text(
+                    f"✅ @{username} "
+                    "deactivated."
+                )
             )
+
         else:
-            await update.effective_message.reply_text(
-                "❌ Telegram did not deactivate it."
+
+            await (
+                update.effective_message
+                .reply_text(
+                    "❌ Telegram did not "
+                    "deactivate it."
+                )
             )
 
     except RPCError as error:
 
-        await update.effective_message.reply_text(
-            "❌ Could not deactivate username.\n\n"
-            f"{error}"
+        await (
+            update.effective_message
+            .reply_text(
+                "❌ Could not deactivate "
+                "username.\n\n"
+                f"{error}"
+            )
         )
 
 
@@ -575,14 +979,22 @@ async def reorder_command(
     context: ContextTypes.DEFAULT_TYPE,
 ):
 
-    if await deny_if_not_owner(update):
+    if await deny_if_not_owner(
+        update
+    ):
         return
 
     if not context.args:
-        await update.effective_message.reply_text(
-            "Usage:\n\n"
-            "/reorder username1 username2 username3"
+
+        await (
+            update.effective_message
+            .reply_text(
+                "Usage:\n\n"
+                "/reorder username1 "
+                "username2 username3"
+            )
         )
+
         return
 
     requested = [
@@ -590,25 +1002,55 @@ async def reorder_command(
         for x in context.args
     ]
 
-    me = await get_me()
+    if any(
+        not valid_username(x)
+        for x in requested
+    ):
 
-    _, active, _ = get_username_lists(me)
-
-    if set(requested) != set(active):
-        await update.effective_message.reply_text(
-            "❌ Invalid order.\n\n"
-            "You must include every currently "
-            "active username exactly once."
+        await (
+            update.effective_message
+            .reply_text(
+                "❌ One or more usernames "
+                "are invalid."
+            )
         )
-        return
 
-    if len(requested) != len(active):
-        await update.effective_message.reply_text(
-            "❌ Duplicate username detected."
-        )
         return
 
     try:
+
+        me = await get_me()
+
+        _, active, _ = (
+            get_username_lists(me)
+        )
+
+        if set(requested) != set(active):
+
+            await (
+                update.effective_message
+                .reply_text(
+                    "❌ Invalid order.\n\n"
+                    "Include every currently "
+                    "active username exactly once."
+                )
+            )
+
+            return
+
+        if len(requested) != len(
+            set(requested)
+        ):
+
+            await (
+                update.effective_message
+                .reply_text(
+                    "❌ Duplicate username "
+                    "detected."
+                )
+            )
+
+            return
 
         result = await user_client(
             ReorderUsernamesRequest(
@@ -617,19 +1059,32 @@ async def reorder_command(
         )
 
         if result:
-            await update.effective_message.reply_text(
-                "✅ Username order updated."
+
+            await (
+                update.effective_message
+                .reply_text(
+                    "✅ Username order updated."
+                )
             )
+
         else:
-            await update.effective_message.reply_text(
-                "❌ Telegram did not update the order."
+
+            await (
+                update.effective_message
+                .reply_text(
+                    "❌ Telegram did not "
+                    "update the order."
+                )
             )
 
     except RPCError as error:
 
-        await update.effective_message.reply_text(
-            "❌ Reorder failed.\n\n"
-            f"{error}"
+        await (
+            update.effective_message
+            .reply_text(
+                "❌ Reorder failed.\n\n"
+                f"{error}"
+            )
         )
 
 
@@ -642,44 +1097,73 @@ async def info_command(
     context: ContextTypes.DEFAULT_TYPE,
 ):
 
-    if await deny_if_not_owner(update):
+    if await deny_if_not_owner(
+        update
+    ):
         return
 
     if not context.args:
-        await update.effective_message.reply_text(
-            "Usage:\n\n"
-            "/info username"
+
+        await (
+            update.effective_message
+            .reply_text(
+                "Usage:\n\n"
+                "/info username"
+            )
         )
+
         return
 
     username = clean_username(
         context.args[0]
     )
 
+    if not valid_username(
+        username
+    ):
+
+        await (
+            update.effective_message
+            .reply_text(
+                "❌ Invalid username."
+            )
+        )
+
+        return
+
     try:
 
+        # These Telegram API objects may depend
+        # on the Telethon/API layer version.
         from telethon.tl.functions.fragment import (
-            GetCollectibleInfoRequest
+            GetCollectibleInfoRequest,
         )
 
         from telethon.tl.types import (
-            InputCollectibleUsername
+            InputCollectibleUsername,
         )
 
     except ImportError:
 
-        await update.effective_message.reply_text(
-            "⚠️ Your installed Telethon version does "
-            "not expose the Fragment helper types."
+        await (
+            update.effective_message
+            .reply_text(
+                "⚠️ Your installed Telethon "
+                "version does not expose the "
+                "collectible-info helper types."
+            )
         )
+
         return
 
     try:
 
         result = await user_client(
             GetCollectibleInfoRequest(
-                collectible=InputCollectibleUsername(
-                    username=username
+                collectible=(
+                    InputCollectibleUsername(
+                        username=username
+                    )
                 )
             )
         )
@@ -690,14 +1174,15 @@ async def info_command(
             f"Username: @{username}",
         ]
 
-        for field in [
+        for field in (
             "purchase_date",
             "currency",
             "amount",
             "crypto_currency",
             "crypto_amount",
             "url",
-        ]:
+        ):
+
             value = getattr(
                 result,
                 field,
@@ -705,21 +1190,44 @@ async def info_command(
             )
 
             if value is not None:
+
                 lines.append(
                     f"{field}: {value}"
                 )
 
-        await update.effective_message.reply_text(
-            "\n".join(lines),
-            parse_mode="Markdown",
+        await (
+            update.effective_message
+            .reply_text(
+                "\n".join(lines),
+                parse_mode="Markdown",
+                disable_web_page_preview=True,
+            )
         )
 
     except RPCError as error:
 
-        await update.effective_message.reply_text(
-            "❌ Could not retrieve collectible "
-            "information.\n\n"
-            f"{error}"
+        await (
+            update.effective_message
+            .reply_text(
+                "❌ Could not retrieve "
+                "collectible information.\n\n"
+                f"{error}"
+            )
+        )
+
+    except Exception as error:
+
+        logger.exception(
+            "/info failed"
+        )
+
+        await (
+            update.effective_message
+            .reply_text(
+                "❌ Collectible information "
+                "is not available.\n\n"
+                f"{error}"
+            )
         )
 
 
@@ -732,15 +1240,22 @@ async def history_command(
     context: ContextTypes.DEFAULT_TYPE,
 ):
 
-    if await deny_if_not_owner(update):
+    if await deny_if_not_owner(
+        update
+    ):
         return
 
     rows = get_candidates()
 
     if not rows:
-        await update.effective_message.reply_text(
-            "No username checks yet."
+
+        await (
+            update.effective_message
+            .reply_text(
+                "No username checks yet."
+            )
         )
+
         return
 
     lines = [
@@ -749,53 +1264,42 @@ async def history_command(
     ]
 
     for row in rows:
+
         lines.append(
-            f"@{row['username']} → {row['status']}"
+            f"@{row['username']} "
+            f"→ {row['status']}"
         )
 
-    await update.effective_message.reply_text(
-        "\n".join(lines),
-        parse_mode="Markdown",
+    await (
+        update.effective_message
+        .reply_text(
+            "\n".join(lines),
+            parse_mode="Markdown",
+        )
     )
 
 
 # ============================================================
-# BOT STARTUP
+# BOT ERROR HANDLER
 # ============================================================
 
-async def run():
+async def error_handler(
+    update: object,
+    context: ContextTypes.DEFAULT_TYPE,
+):
 
-    init_database()
-
-    print("=" * 60)
-    print("PERSONAL TELEGRAM USERNAME TOOL")
-    print("=" * 60)
-
-    print()
-    print("Connecting to Telegram user account...")
-
-    await user_client.start(
-        phone=PHONE_NUMBER
+    logger.error(
+        "Bot error while processing update: %s",
+        context.error,
+        exc_info=context.error,
     )
 
-    me = await user_client.get_me()
 
-    print(
-        f"Logged in as: "
-        f"{me.first_name or ''} "
-        f"{me.last_name or ''}".strip()
-    )
+# ============================================================
+# TELEGRAM CONTROL BOT
+# ============================================================
 
-    if me.username:
-        print(
-            f"Username: @{me.username}"
-        )
-
-    print()
-    print("Telegram user account connected.")
-    print()
-
-    print("Starting BotFather bot...")
+def build_application():
 
     application = (
         Application.builder()
@@ -859,21 +1363,144 @@ async def run():
         )
     )
 
-    print("Bot is running.")
+    application.add_error_handler(
+        error_handler
+    )
+
+    return application
+
+
+# ============================================================
+# STARTUP
+# ============================================================
+
+async def run():
+
+    init_database()
+
+    print("=" * 60)
+    print(
+        "PERSONAL TELEGRAM USERNAME TOOL"
+    )
+    print("=" * 60)
     print()
-    print("Send /start to your BotFather bot.")
+
+    # --------------------------------------------------------
+    # CONNECT USER ACCOUNT
+    # --------------------------------------------------------
+
+    print(
+        "Connecting to Telegram "
+        "user account..."
+    )
+
+    await user_client.connect()
+
+    # If a valid saved session exists,
+    # no login code is needed again.
+    if not await user_client.is_user_authorized():
+
+        print()
+        print(
+            "No authorized Telegram "
+            "session was found."
+        )
+        print()
+        print(
+            "A first-time Telegram login "
+            "is required."
+        )
+        print(
+            "Do not place your login code "
+            "or 2FA password in .env."
+        )
+        print()
+
+        # This can request a Telegram login code
+        # interactively during first-time setup.
+        # For a long-running Render deployment,
+        # create/persist the session securely.
+        await user_client.start(
+            phone=PHONE_NUMBER
+        )
+
+    me = await user_client.get_me()
+
+    print(
+        "Logged in as:",
+        (
+            f"{me.first_name or ''} "
+            f"{me.last_name or ''}"
+        ).strip(),
+    )
+
+    if me.username:
+
+        print(
+            f"Username: @{me.username}"
+        )
+
+    print(
+        f"Telegram ID: {me.id}"
+    )
+
     print()
+    print(
+        "Telegram user account connected."
+    )
+    print()
+
+    # --------------------------------------------------------
+    # START BOTFATHER CONTROL BOT
+    # --------------------------------------------------------
+
+    print(
+        "Starting Telegram control bot..."
+    )
+
+    application = build_application()
 
     await application.initialize()
     await application.start()
-    await application.updater.start_polling()
+
+    if application.updater is None:
+
+        raise RuntimeError(
+            "Telegram updater is unavailable."
+        )
+
+    await application.updater.start_polling(
+        allowed_updates=Update.ALL_TYPES,
+        drop_pending_updates=False,
+    )
+
+    print()
+    print(
+        "Control bot is running."
+    )
+    print(
+        "Send /start to your bot."
+    )
+    print()
 
     try:
-        while True:
-            await asyncio.sleep(3600)
+
+        # Keep both Telegram clients alive.
+        await asyncio.Event().wait()
 
     finally:
-        await application.updater.stop()
+
+        logger.info(
+            "Shutting down..."
+        )
+
+        if application.updater:
+
+            await (
+                application.updater
+                .stop()
+            )
+
         await application.stop()
         await application.shutdown()
 
@@ -881,19 +1508,44 @@ async def run():
 
 
 # ============================================================
-# RUN
+# MAIN
 # ============================================================
 
 if __name__ == "__main__":
 
+    # Render requires a Web Service to bind
+    # to an HTTP port.
+    web_thread = threading.Thread(
+        target=start_web_server,
+        daemon=True,
+        name="render-health-server",
+    )
+
+    web_thread.start()
+
     try:
-        asyncio.run(run())
+
+        asyncio.run(
+            run()
+        )
 
     except KeyboardInterrupt:
+
         print()
-        print("Stopped.")
+        print(
+            "Stopped."
+        )
 
     except Exception as error:
+
+        logger.exception(
+            "Fatal application error"
+        )
+
         print()
-        print("Fatal error:")
-        print(error)
+        print(
+            "Fatal error:"
+        )
+        print(
+            error
+        )
