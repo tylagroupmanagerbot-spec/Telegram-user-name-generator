@@ -3,8 +3,9 @@
 # File: main.py
 # Python 3.10+
 #
-# Structure:
+# Render Web Service + HTML + Telegram Bot + Telethon
 #
+# Project:
 # telegram_username_tool/
 # ├── main.py
 # ├── database.py
@@ -16,17 +17,25 @@
 
 import os
 import re
+import io
+import json
+import time
 import asyncio
-import logging
 import secrets
+import logging
 import threading
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlparse
 
+import qrcode
 from dotenv import load_dotenv
 
 from telethon import TelegramClient
-from telethon.errors import RPCError
+from telethon.errors import (
+    RPCError,
+    SessionPasswordNeededError,
+)
 from telethon.tl.functions.account import (
     CheckUsernameRequest,
     ToggleUsernameRequest,
@@ -54,7 +63,6 @@ from database import (
 BASE_DIR = Path(__file__).resolve().parent
 
 TEMPLATE_DIR = BASE_DIR / "templates"
-
 INDEX_FILE = TEMPLATE_DIR / "index.html"
 
 SESSION_DIR = BASE_DIR / "session"
@@ -98,14 +106,9 @@ PORT_RAW = os.getenv(
     "10000",
 ).strip()
 
-PUBLIC_URL = os.getenv(
-    "PUBLIC_URL",
-    "",
-).strip().rstrip("/")
-
 
 # ============================================================
-# VALIDATION
+# VALIDATE
 # ============================================================
 
 if not API_ID_RAW:
@@ -128,24 +131,34 @@ if not OWNER_USER_ID_RAW:
         "OWNER_USER_ID is missing."
     )
 
+
 try:
-    API_ID = int(API_ID_RAW)
+    API_ID = int(
+        API_ID_RAW
+    )
+
 except ValueError:
     raise RuntimeError(
         "API_ID must be a number."
     )
 
+
 try:
     OWNER_USER_ID = int(
         OWNER_USER_ID_RAW
     )
+
 except ValueError:
     raise RuntimeError(
         "OWNER_USER_ID must be a number."
     )
 
+
 try:
-    PORT = int(PORT_RAW)
+    PORT = int(
+        PORT_RAW
+    )
+
 except ValueError:
     PORT = 10000
 
@@ -165,12 +178,12 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(
-    "telegram-username-tool"
+    "username-tool"
 )
 
 
 # ============================================================
-# TELETHON USER SESSION
+# TELETHON
 # ============================================================
 
 SESSION_FILE = (
@@ -186,27 +199,47 @@ user_client = TelegramClient(
 
 
 # ============================================================
-# SECURITY
+# EVENT LOOP
+# ============================================================
+
+MAIN_LOOP = None
+
+
+# ============================================================
+# QR LOGIN STATE
+# ============================================================
+
+qr_lock = threading.Lock()
+
+qr_state = {
+    "token": None,
+    "url": None,
+    "created": 0,
+    "status": "idle",
+    "error": None,
+}
+
+
+# ============================================================
+# OWNER SECURITY
 # ============================================================
 
 def owner_only(
     update: Update,
-) -> bool:
+):
 
     user = update.effective_user
 
-    if not user:
-        return False
-
-    return (
-        user.id
-        == OWNER_USER_ID
+    return bool(
+        user
+        and
+        user.id == OWNER_USER_ID
     )
 
 
 async def deny_if_not_owner(
     update: Update,
-) -> bool:
+):
 
     if owner_only(update):
         return False
@@ -231,6 +264,7 @@ async def deny_if_not_owner(
 async def ensure_connected():
 
     if not user_client.is_connected():
+
         await user_client.connect()
 
 
@@ -248,7 +282,8 @@ async def is_account_connected():
     except Exception:
 
         logger.exception(
-            "Authorization check failed."
+            "Telegram authorization "
+            "check failed."
         )
 
         return False
@@ -258,19 +293,196 @@ async def get_me():
 
     await ensure_connected()
 
-    authorized = await (
-        user_client
-        .is_user_authorized()
-    )
+    if not await user_client.is_user_authorized():
 
-    if not authorized:
         return None
 
     return await user_client.get_me()
 
 
 # ============================================================
-# HTML SERVER
+# CALL ASYNC CODE FROM HTTP THREAD
+# ============================================================
+
+def run_async(
+    coroutine,
+    timeout=20,
+):
+
+    if MAIN_LOOP is None:
+
+        raise RuntimeError(
+            "Application event loop "
+            "is not ready."
+        )
+
+    future = (
+        asyncio.run_coroutine_threadsafe(
+            coroutine,
+            MAIN_LOOP,
+        )
+    )
+
+    return future.result(
+        timeout=timeout
+    )
+
+
+# ============================================================
+# QR AUTHORIZATION
+# ============================================================
+
+async def start_qr_authorization():
+
+    await ensure_connected()
+
+    if await user_client.is_user_authorized():
+
+        return {
+            "connected": True,
+        }
+
+    qr_login = await (
+        user_client.qr_login()
+    )
+
+    token = secrets.token_urlsafe(
+        24
+    )
+
+    with qr_lock:
+
+        qr_state["token"] = token
+        qr_state["url"] = qr_login.url
+        qr_state["created"] = time.time()
+        qr_state["status"] = "waiting"
+        qr_state["error"] = None
+
+    asyncio.create_task(
+        wait_for_qr(
+            qr_login,
+            token,
+        )
+    )
+
+    return {
+        "connected": False,
+        "token": token,
+        "authorization_url": (
+            "/connect?token="
+            + token
+        ),
+    }
+
+
+async def wait_for_qr(
+    qr_login,
+    token,
+):
+
+    try:
+
+        await qr_login.wait(
+            timeout=120
+        )
+
+        if not await user_client.is_user_authorized():
+
+            raise RuntimeError(
+                "Telegram did not authorize "
+                "the session."
+            )
+
+        me = await user_client.get_me()
+
+        logger.info(
+            "Telegram account connected: %s",
+            me.id,
+        )
+
+        with qr_lock:
+
+            if qr_state["token"] == token:
+
+                qr_state["status"] = (
+                    "connected"
+                )
+
+                qr_state["error"] = None
+
+    except SessionPasswordNeededError:
+
+        # Do not collect the user's Telegram
+        # 2FA password through this website.
+
+        with qr_lock:
+
+            if qr_state["token"] == token:
+
+                qr_state["status"] = "2fa"
+
+                qr_state["error"] = (
+                    "Telegram two-step "
+                    "verification is enabled."
+                )
+
+    except asyncio.TimeoutError:
+
+        with qr_lock:
+
+            if qr_state["token"] == token:
+
+                qr_state["status"] = (
+                    "expired"
+                )
+
+                qr_state["error"] = (
+                    "QR code expired."
+                )
+
+    except Exception as error:
+
+        logger.exception(
+            "QR authorization failed."
+        )
+
+        with qr_lock:
+
+            if qr_state["token"] == token:
+
+                qr_state["status"] = (
+                    "error"
+                )
+
+                qr_state["error"] = str(
+                    error
+                )
+
+
+# ============================================================
+# QR IMAGE
+# ============================================================
+
+def create_qr_png(
+    value,
+):
+
+    image = qrcode.make(
+        value
+    )
+
+    buffer = io.BytesIO()
+
+    image.save(
+        buffer,
+        format="PNG",
+    )
+
+    return buffer.getvalue()
+
+
+# ============================================================
+# HTML
 # ============================================================
 
 def load_index_html():
@@ -284,51 +496,304 @@ def load_index_html():
     return """<!doctype html>
 <html>
 <head>
-    <meta charset="utf-8">
-    <meta
-        name="viewport"
-        content="width=device-width,initial-scale=1"
-    >
-
-    <title>Telegram Username Tool</title>
+<meta charset="utf-8">
+<meta
+    name="viewport"
+    content="width=device-width,initial-scale=1"
+>
+<title>Telegram Username Tool</title>
 </head>
 
 <body>
 
-    <h1>Telegram Username Tool</h1>
+<h1>Telegram Username Tool</h1>
 
-    <p>
-        index.html was not found.
-    </p>
-
-    <p>
-        Create:
-        templates/index.html
-    </p>
+<p>
+templates/index.html was not found.
+</p>
 
 </body>
 </html>
 """
 
 
+def connect_page(
+    token,
+):
+
+    safe_token = json.dumps(
+        token
+    )
+
+    return f"""<!doctype html>
+
+<html lang="en">
+
+<head>
+
+<meta charset="utf-8">
+
+<meta
+    name="viewport"
+    content="width=device-width,initial-scale=1"
+>
+
+<title>Connect Telegram</title>
+
+<style>
+
+* {{
+    box-sizing: border-box;
+}}
+
+body {{
+
+    margin: 0;
+
+    min-height: 100vh;
+
+    background:
+        linear-gradient(
+            135deg,
+            #0f172a,
+            #111827,
+            #1e293b
+        );
+
+    color: white;
+
+    font-family:
+        Arial,
+        Helvetica,
+        sans-serif;
+
+    display: flex;
+
+    justify-content: center;
+    align-items: center;
+
+    padding: 20px;
+}}
+
+.card {{
+
+    width: 100%;
+    max-width: 430px;
+
+    background:
+        rgba(
+            255,
+            255,
+            255,
+            0.07
+        );
+
+    border:
+        1px solid
+        rgba(
+            255,
+            255,
+            255,
+            0.10
+        );
+
+    border-radius: 22px;
+
+    padding: 26px;
+
+    text-align: center;
+}}
+
+h1 {{
+    margin-top: 0;
+}}
+
+p {{
+    color: #cbd5e1;
+    line-height: 1.6;
+}}
+
+.qr {{
+
+    width: 280px;
+    max-width: 100%;
+
+    background: white;
+
+    padding: 12px;
+
+    border-radius: 18px;
+
+    margin:
+        15px
+        auto;
+}}
+
+.status {{
+
+    margin-top: 18px;
+
+    padding: 14px;
+
+    background:
+        rgba(
+            255,
+            255,
+            255,
+            0.07
+        );
+
+    border-radius: 14px;
+}}
+
+a {{
+
+    color: white;
+}}
+
+</style>
+
+</head>
+
+<body>
+
+<div class="card">
+
+<h1>Connect Telegram</h1>
+
+<p>
+Open Telegram and go to
+<strong>
+Settings → Devices → Link Desktop Device
+</strong>.
+</p>
+
+<img
+    class="qr"
+    src="/api/qr?token={token}"
+    alt="Telegram authorization QR"
+>
+
+<div
+    class="status"
+    id="status"
+>
+Waiting for Telegram approval...
+</div>
+
+<p>
+Do not share this QR with anyone.
+</p>
+
+</div>
+
+
+<script>
+
+const token = {safe_token};
+
+async function check() {{
+
+    try {{
+
+        const response =
+            await fetch(
+                "/api/login-status?token="
+                + encodeURIComponent(token),
+                {{
+                    cache: "no-store"
+                }}
+            );
+
+        const data =
+            await response.json();
+
+        const box =
+            document.getElementById(
+                "status"
+            );
+
+        if (data.status === "connected") {{
+
+            box.textContent =
+                "✅ Telegram connected successfully.";
+
+            setTimeout(
+                () => {{
+                    window.location.href = "/";
+                }},
+                1000
+            );
+
+            return;
+        }}
+
+        if (data.status === "expired") {{
+
+            box.textContent =
+                "⌛ QR expired. Return and try again.";
+
+            return;
+        }}
+
+        if (data.status === "2fa") {{
+
+            box.textContent =
+                "🔐 This Telegram account requires "
+                + "two-step verification. "
+                + "This website does not collect "
+                + "your 2FA password.";
+
+            return;
+        }}
+
+        if (data.status === "error") {{
+
+            box.textContent =
+                "❌ Telegram authorization failed.";
+
+            return;
+        }}
+
+        setTimeout(
+            check,
+            1500
+        );
+
+    }} catch (error) {{
+
+        setTimeout(
+            check,
+            2000
+        );
+    }}
+}}
+
+check();
+
+</script>
+
+</body>
+</html>
+"""
+
+
+# ============================================================
+# HTTP SERVER
+# ============================================================
+
 class WebHandler(
     BaseHTTPRequestHandler
 ):
 
-    def send_content(
+    def send_bytes(
         self,
         body,
         status=200,
         content_type=(
-            "text/html; charset=utf-8"
+            "application/octet-stream"
         ),
     ):
-
-        if isinstance(body, str):
-
-            body = body.encode(
-                "utf-8"
-            )
 
         self.send_response(
             status
@@ -355,48 +820,352 @@ class WebHandler(
             body
         )
 
+    def send_text(
+        self,
+        text,
+        status=200,
+        content_type=(
+            "text/plain; charset=utf-8"
+        ),
+    ):
+
+        body = text.encode(
+            "utf-8"
+        )
+
+        self.send_bytes(
+            body,
+            status,
+            content_type,
+        )
+
+    def send_json(
+        self,
+        data,
+        status=200,
+    ):
+
+        body = json.dumps(
+            data
+        ).encode(
+            "utf-8"
+        )
+
+        self.send_bytes(
+            body,
+            status,
+            "application/json; charset=utf-8",
+        )
+
+    def send_html(
+        self,
+        content,
+        status=200,
+    ):
+
+        self.send_text(
+            content,
+            status,
+            "text/html; charset=utf-8",
+        )
+
     def do_GET(self):
 
-        # --------------------------------------------
-        # HOME PAGE
-        # --------------------------------------------
+        parsed = urlparse(
+            self.path
+        )
 
-        if self.path == "/":
+        path = parsed.path
 
-            self.send_content(
+        query = {}
+
+        if parsed.query:
+
+            from urllib.parse import (
+                parse_qs,
+            )
+
+            query = parse_qs(
+                parsed.query
+            )
+
+        # ----------------------------------------------------
+        # HOME
+        # ----------------------------------------------------
+
+        if path == "/":
+
+            self.send_html(
                 load_index_html()
             )
 
             return
 
-        # --------------------------------------------
-        # HEALTH CHECK
-        # --------------------------------------------
+        # ----------------------------------------------------
+        # HEALTH
+        # ----------------------------------------------------
 
-        if self.path in (
+        if path in (
             "/health",
             "/healthz",
         ):
 
-            self.send_content(
-                "OK",
-                content_type=(
-                    "text/plain; charset=utf-8"
-                ),
+            self.send_text(
+                "OK"
             )
 
             return
 
-        # --------------------------------------------
-        # 404
-        # --------------------------------------------
+        # ----------------------------------------------------
+        # CONNECT PAGE
+        # ----------------------------------------------------
 
-        self.send_content(
+        if path == "/connect":
+
+            token = (
+                query.get(
+                    "token",
+                    [""],
+                )[0]
+            )
+
+            with qr_lock:
+
+                valid = (
+                    token
+                    and
+                    qr_state["token"]
+                    == token
+                )
+
+            if not valid:
+
+                self.send_html(
+                    "<h1>Invalid or expired "
+                    "connection.</h1>",
+                    400,
+                )
+
+                return
+
+            self.send_html(
+                connect_page(
+                    token
+                )
+            )
+
+            return
+
+        # ----------------------------------------------------
+        # API STATUS
+        # ----------------------------------------------------
+
+        if path == "/api/status":
+
+            try:
+
+                connected = run_async(
+                    is_account_connected()
+                )
+
+                result = {
+                    "connected": bool(
+                        connected
+                    )
+                }
+
+                if connected:
+
+                    me = run_async(
+                        get_me()
+                    )
+
+                    if me:
+
+                        result["id"] = (
+                            me.id
+                        )
+
+                        result["username"] = (
+                            me.username
+                            or None
+                        )
+
+                self.send_json(
+                    result
+                )
+
+            except Exception as error:
+
+                logger.exception(
+                    "Status API failed."
+                )
+
+                self.send_json(
+                    {
+                        "connected": False,
+                        "error": str(error),
+                    },
+                    500,
+                )
+
+            return
+
+        # ----------------------------------------------------
+        # LOGIN STATUS
+        # ----------------------------------------------------
+
+        if path == "/api/login-status":
+
+            token = (
+                query.get(
+                    "token",
+                    [""],
+                )[0]
+            )
+
+            with qr_lock:
+
+                if (
+                    not token
+                    or
+                    qr_state["token"]
+                    != token
+                ):
+
+                    self.send_json(
+                        {
+                            "status": "invalid"
+                        },
+                        404,
+                    )
+
+                    return
+
+                status = (
+                    qr_state["status"]
+                )
+
+                error = (
+                    qr_state["error"]
+                )
+
+            self.send_json(
+                {
+                    "status": status,
+                    "error": error,
+                }
+            )
+
+            return
+
+        # ----------------------------------------------------
+        # QR IMAGE
+        # ----------------------------------------------------
+
+        if path == "/api/qr":
+
+            token = (
+                query.get(
+                    "token",
+                    [""],
+                )[0]
+            )
+
+            with qr_lock:
+
+                if (
+                    not token
+                    or
+                    qr_state["token"]
+                    != token
+                ):
+
+                    self.send_text(
+                        "Invalid QR.",
+                        404,
+                    )
+
+                    return
+
+                qr_url = (
+                    qr_state["url"]
+                )
+
+            if not qr_url:
+
+                self.send_text(
+                    "QR unavailable.",
+                    404,
+                )
+
+                return
+
+            image = create_qr_png(
+                qr_url
+            )
+
+            self.send_bytes(
+                image,
+                200,
+                "image/png",
+            )
+
+            return
+
+        # ----------------------------------------------------
+        # NOT FOUND
+        # ----------------------------------------------------
+
+        self.send_text(
             "Not Found",
-            status=404,
-            content_type=(
-                "text/plain; charset=utf-8"
-            ),
+            404,
+        )
+
+    def do_POST(self):
+
+        parsed = urlparse(
+            self.path
+        )
+
+        # ----------------------------------------------------
+        # START TELEGRAM CONNECTION
+        # ----------------------------------------------------
+
+        if parsed.path == "/api/connect":
+
+            try:
+
+                result = run_async(
+                    start_qr_authorization()
+                )
+
+                self.send_json(
+                    result
+                )
+
+            except Exception as error:
+
+                logger.exception(
+                    "Could not start "
+                    "Telegram authorization."
+                )
+
+                self.send_json(
+                    {
+                        "connected": False,
+                        "error": str(error),
+                    },
+                    500,
+                )
+
+            return
+
+        self.send_json(
+            {
+                "error": "Not Found"
+            },
+            404,
         )
 
     def log_message(
@@ -404,6 +1173,7 @@ class WebHandler(
         format,
         *args,
     ):
+
         return
 
 
@@ -418,8 +1188,8 @@ def start_web_server():
     )
 
     logger.info(
-        "Website listening on "
-        "0.0.0.0:%s",
+        "Render web server listening "
+        "on 0.0.0.0:%s",
         PORT,
     )
 
@@ -442,6 +1212,7 @@ def clean_username(
     value = value.strip()
 
     if value.startswith("@"):
+
         value = value[1:]
 
     return value
@@ -473,11 +1244,12 @@ def generate_candidate(
     )
 
     if not base:
+
         base = "user"
 
     base = base[:22]
 
-    options = [
+    choices = [
         f"{base}{secrets.randbelow(900) + 100}",
         f"{base}_dev",
         f"{base}_tech",
@@ -487,10 +1259,11 @@ def generate_candidate(
     ]
 
     candidate = secrets.choice(
-        options
+        choices
     )[:32]
 
     while len(candidate) < 5:
+
         candidate += "0"
 
     return candidate
@@ -570,22 +1343,17 @@ async def start_command(
         is_account_connected()
     )
 
-    if connected:
-
-        status = (
-            "🟢 Telegram account connected"
-        )
-
-    else:
-
-        status = (
-            "🔴 Telegram account not connected"
-        )
+    status = (
+        "🟢 Connected"
+        if connected
+        else
+        "🔴 Not connected"
+    )
 
     text = (
         "💎 TELEGRAM USERNAME TOOL\n\n"
 
-        f"{status}\n\n"
+        f"Account: {status}\n\n"
 
         "Commands:\n\n"
 
@@ -624,19 +1392,11 @@ async def status_command(
 
     if not me:
 
-        website = (
-            PUBLIC_URL
-            if PUBLIC_URL
-            else "Render website"
-        )
-
         await (
             update.effective_message
             .reply_text(
                 "🔴 Telegram account "
-                "is not connected.\n\n"
-                "Open the website to connect:\n"
-                f"{website}"
+                "is not connected."
             )
         )
 
@@ -703,7 +1463,8 @@ async def createuser_command(
     message = await (
         update.effective_message
         .reply_text(
-            f"🔎 Checking @{candidate}..."
+            f"🔎 Checking "
+            f"@{candidate}..."
         )
     )
 
@@ -715,35 +1476,38 @@ async def createuser_command(
             )
         )
 
-        if available:
-
-            status = "AVAILABLE"
-
-            result = (
-                "✅ USERNAME AVAILABLE\n\n"
-                f"@{candidate}\n\n"
-                "This means ordinary Telegram "
-                "username availability.\n"
-                "It does not mean the username "
-                "is a Fragment collectible."
-            )
-
-        else:
-
-            status = "TAKEN"
-
-            result = (
-                "❌ USERNAME UNAVAILABLE\n\n"
-                f"@{candidate}"
-            )
+        status = (
+            "AVAILABLE"
+            if available
+            else
+            "TAKEN"
+        )
 
         save_candidate(
             candidate,
             status,
         )
 
+        if available:
+
+            text = (
+                "✅ USERNAME AVAILABLE\n\n"
+                f"@{candidate}\n\n"
+                "Ordinary Telegram username "
+                "availability.\n"
+                "This does not mean it is a "
+                "Fragment collectible."
+            )
+
+        else:
+
+            text = (
+                "❌ USERNAME UNAVAILABLE\n\n"
+                f"@{candidate}"
+            )
+
         await message.edit_text(
-            result
+            text
         )
 
     except RPCError as error:
@@ -761,12 +1525,11 @@ async def createuser_command(
     except Exception as error:
 
         logger.exception(
-            "/createuser failed"
+            "/createuser failed."
         )
 
         await message.edit_text(
-            "❌ Error:\n\n"
-            f"{error}"
+            f"❌ Error:\n\n{error}"
         )
 
 
@@ -804,7 +1567,7 @@ async def myusernames_command(
     )
 
     lines = [
-        "👤 MY TELEGRAM USERNAMES",
+        "👤 MY USERNAMES",
         "",
         (
             "Main: "
@@ -821,6 +1584,7 @@ async def myusernames_command(
     if active:
 
         for username in active:
+
             lines.append(
                 f"• @{username}"
             )
@@ -841,6 +1605,7 @@ async def myusernames_command(
     if inactive:
 
         for username in inactive:
+
             lines.append(
                 f"• @{username}"
             )
@@ -922,23 +1687,16 @@ async def activate_command(
             )
         )
 
-        if result:
-
-            text = (
-                f"✅ @{username} activated."
-            )
-
-        else:
-
-            text = (
-                "❌ Telegram did not "
-                "activate the username."
-            )
-
         await (
             update.effective_message
             .reply_text(
-                text
+                (
+                    f"✅ @{username} activated."
+                    if result
+                    else
+                    "❌ Telegram did not "
+                    "activate the username."
+                )
             )
         )
 
@@ -1016,23 +1774,16 @@ async def deactivate_command(
             )
         )
 
-        if result:
-
-            text = (
-                f"✅ @{username} deactivated."
-            )
-
-        else:
-
-            text = (
-                "❌ Telegram did not "
-                "deactivate the username."
-            )
-
         await (
             update.effective_message
             .reply_text(
-                text
+                (
+                    f"✅ @{username} deactivated."
+                    if result
+                    else
+                    "❌ Telegram did not "
+                    "deactivate the username."
+                )
             )
         )
 
@@ -1078,6 +1829,20 @@ async def reorder_command(
         for x in context.args
     ]
 
+    if (
+        len(requested)
+        != len(set(requested))
+    ):
+
+        await (
+            update.effective_message
+            .reply_text(
+                "❌ Duplicate username."
+            )
+        )
+
+        return
+
     if any(
         not valid_username(x)
         for x in requested
@@ -1086,8 +1851,7 @@ async def reorder_command(
         await (
             update.effective_message
             .reply_text(
-                "❌ Invalid username "
-                "in the list."
+                "❌ Invalid username."
             )
         )
 
@@ -1130,23 +1894,16 @@ async def reorder_command(
             )
         )
 
-        if result:
-
-            text = (
-                "✅ Username order updated."
-            )
-
-        else:
-
-            text = (
-                "❌ Telegram did not "
-                "update the order."
-            )
-
         await (
             update.effective_message
             .reply_text(
-                text
+                (
+                    "✅ Username order updated."
+                    if result
+                    else
+                    "❌ Telegram did not "
+                    "update the order."
+                )
             )
         )
 
@@ -1209,7 +1966,7 @@ async def history_command(
 
 
 # ============================================================
-# ERROR HANDLER
+# BOT ERROR HANDLER
 # ============================================================
 
 async def error_handler(
@@ -1225,85 +1982,79 @@ async def error_handler(
 
 
 # ============================================================
-# BUILD BOT
+# BUILD TELEGRAM BOT
 # ============================================================
 
 def build_application():
 
-    app = (
+    application = (
         Application.builder()
         .token(BOT_TOKEN)
         .build()
     )
 
-    app.add_handler(
-        CommandHandler(
+    handlers = [
+        (
             "start",
             start_command,
-        )
-    )
-
-    app.add_handler(
-        CommandHandler(
+        ),
+        (
             "status",
             status_command,
-        )
-    )
-
-    app.add_handler(
-        CommandHandler(
+        ),
+        (
             "createuser",
             createuser_command,
-        )
-    )
-
-    app.add_handler(
-        CommandHandler(
+        ),
+        (
             "myusernames",
             myusernames_command,
-        )
-    )
-
-    app.add_handler(
-        CommandHandler(
+        ),
+        (
             "activate",
             activate_command,
-        )
-    )
-
-    app.add_handler(
-        CommandHandler(
+        ),
+        (
             "deactivate",
             deactivate_command,
-        )
-    )
-
-    app.add_handler(
-        CommandHandler(
+        ),
+        (
             "reorder",
             reorder_command,
-        )
-    )
-
-    app.add_handler(
-        CommandHandler(
+        ),
+        (
             "history",
             history_command,
-        )
-    )
+        ),
+    ]
 
-    app.add_error_handler(
+    for command, callback in handlers:
+
+        application.add_handler(
+            CommandHandler(
+                command,
+                callback,
+            )
+        )
+
+    application.add_error_handler(
         error_handler
     )
 
-    return app
+    return application
 
 
 # ============================================================
-# START
+# RUN
 # ============================================================
 
 async def run():
+
+    global MAIN_LOOP
+
+    MAIN_LOOP = (
+        asyncio.get_running_loop()
+    )
 
     init_database()
 
@@ -1313,8 +2064,8 @@ async def run():
     )
     print("=" * 60)
 
-    # Connect Telethon, but DO NOT use
-    # interactive terminal login on Render.
+    # Connect MTProto client without
+    # interactive terminal login.
 
     await user_client.connect()
 
@@ -1323,15 +2074,16 @@ async def run():
         me = await user_client.get_me()
 
         logger.info(
-            "Telegram session connected: %s",
+            "Telegram user account "
+            "connected: %s",
             me.id,
         )
 
     else:
 
         logger.info(
-            "Telegram account is not "
-            "authorized yet."
+            "Telegram user account is "
+            "not authorized yet."
         )
 
     # Start Render HTTP server.
@@ -1344,7 +2096,7 @@ async def run():
 
     web_thread.start()
 
-    # Start Telegram BotFather bot.
+    # Start BotFather control bot.
 
     application = (
         build_application()
@@ -1357,7 +2109,8 @@ async def run():
     if application.updater is None:
 
         raise RuntimeError(
-            "Telegram updater unavailable."
+            "Telegram bot updater "
+            "is unavailable."
         )
 
     await (
@@ -1365,12 +2118,13 @@ async def run():
         .start_polling(
             allowed_updates=(
                 Update.ALL_TYPES
-            )
+            ),
+            drop_pending_updates=False,
         )
     )
 
     logger.info(
-        "Control bot running."
+        "Telegram control bot running."
     )
 
     try:
@@ -1378,6 +2132,10 @@ async def run():
         await asyncio.Event().wait()
 
     finally:
+
+        logger.info(
+            "Shutting down."
+        )
 
         if application.updater:
 
