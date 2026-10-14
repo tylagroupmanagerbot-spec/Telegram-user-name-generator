@@ -1,6 +1,6 @@
 # ============================================================
-# PERSONAL TELEGRAM USERNAME TOOL
 # File: database.py
+# SQLite database for username checks
 # ============================================================
 
 import sqlite3
@@ -8,54 +8,84 @@ from pathlib import Path
 
 
 BASE_DIR = Path(__file__).resolve().parent
-DATABASE_FILE = BASE_DIR / "username_tool.db"
+DATABASE_FILE = BASE_DIR / "bot.db"
 
 
-def connection():
-    conn = sqlite3.connect(DATABASE_FILE)
-    conn.row_factory = sqlite3.Row
-    return conn
+def connect():
+
+    connection = sqlite3.connect(
+        DATABASE_FILE,
+        timeout=30
+    )
+
+    connection.row_factory = sqlite3.Row
+
+    return connection
 
 
 def init_database():
-    conn = connection()
 
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS candidates (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            status TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    with connect() as db:
+
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS candidates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL,
+                status TEXT NOT NULL,
+                checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
         )
-    """)
 
-    conn.commit()
-    conn.close()
+        db.commit()
 
 
-def save_candidate(username, status):
-    conn = connection()
+def save_candidate(
+    username,
+    status
+):
 
-    conn.execute("""
-        INSERT INTO candidates(username, status)
-        VALUES (?, ?)
-        ON CONFLICT(username)
-        DO UPDATE SET status = excluded.status
-    """, (username, status))
+    with connect() as db:
 
-    conn.commit()
-    conn.close()
+        db.execute(
+            """
+            INSERT INTO candidates (
+                username,
+                status
+            )
+            VALUES (?, ?)
+            """,
+            (
+                username,
+                status
+            )
+        )
+
+        db.commit()
 
 
-def get_candidates(limit=20):
-    conn = connection()
+def get_candidates(
+    limit=20
+):
 
-    rows = conn.execute("""
-        SELECT username, status, created_at
-        FROM candidates
-        ORDER BY id DESC
-        LIMIT ?
-    """, (limit,)).fetchall()
+    with connect() as db:
 
-    conn.close()
-    return rows
+        rows = db.execute(
+            """
+            SELECT
+                id,
+                username,
+                status,
+                checked_at
+            FROM candidates
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (limit,)
+        ).fetchall()
+
+    return [
+        dict(row)
+        for row in rows
+    ]
