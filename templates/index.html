@@ -1,6 +1,9 @@
 <!DOCTYPE html>
+
 <html lang="en">
+
 <head>
+
     <meta charset="UTF-8">
 
     <meta
@@ -8,16 +11,22 @@
         content="width=device-width, initial-scale=1.0"
     >
 
-    <title>Telegram Username Tool</title>
+    <title>
+        Telegram Username Tool
+    </title>
+
 
     <style>
+
         * {
+            box-sizing: border-box;
             margin: 0;
             padding: 0;
-            box-sizing: border-box;
         }
 
+
         body {
+
             min-height: 100vh;
 
             font-family:
@@ -28,63 +37,86 @@
             background:
                 linear-gradient(
                     135deg,
+                    #020617,
                     #0f172a,
-                    #111827,
                     #1e293b
                 );
 
             color: white;
 
             display: flex;
-            align-items: center;
+
             justify-content: center;
+
+            align-items: center;
 
             padding: 20px;
         }
 
+
         .container {
+
             width: 100%;
+
             max-width: 430px;
         }
 
-        .logo {
+
+        .header {
+
             text-align: center;
+
             margin-bottom: 25px;
         }
 
-        .telegram-icon {
+
+        .icon {
+
             width: 85px;
+
             height: 85px;
-
-            margin: auto;
-
-            display: flex;
-            align-items: center;
-            justify-content: center;
 
             border-radius: 50%;
 
+            margin:
+                0
+                auto
+                18px;
+
+            display: flex;
+
+            justify-content: center;
+
+            align-items: center;
+
             background: #229ED9;
 
-            font-size: 42px;
-
-            box-shadow:
-                0 10px 40px
-                rgba(34, 158, 217, 0.35);
+            font-size: 40px;
         }
 
-        .logo h1 {
-            margin-top: 18px;
+
+        h1 {
+
             font-size: 27px;
         }
 
-        .logo p {
-            margin-top: 8px;
+
+        .subtitle {
+
             color: #94a3b8;
+
+            margin-top: 8px;
+
             line-height: 1.5;
         }
 
+
         .card {
+
+            padding: 25px;
+
+            border-radius: 22px;
+
             background:
                 rgba(
                     255,
@@ -102,21 +134,24 @@
                     0.10
                 );
 
-            border-radius: 22px;
-
-            padding: 25px;
-
             box-shadow:
-                0 25px 60px
-                rgba(0, 0, 0, 0.35);
+                0
+                20px
+                60px
+                rgba(
+                    0,
+                    0,
+                    0,
+                    0.35
+                );
         }
 
-        .status {
-            display: flex;
-            align-items: center;
-            gap: 10px;
 
-            padding: 14px;
+        .status {
+
+            padding: 16px;
+
+            border-radius: 14px;
 
             background:
                 rgba(
@@ -126,82 +161,45 @@
                     0.06
                 );
 
-            border-radius: 14px;
+            display: flex;
 
-            margin-bottom: 22px;
+            align-items: center;
+
+            gap: 12px;
         }
 
-        .status-dot {
-            width: 11px;
-            height: 11px;
 
-            background: #ef4444;
+        .dot {
+
+            width: 12px;
+
+            height: 12px;
 
             border-radius: 50%;
+
+            background: #ef4444;
         }
 
-        .status.connected .status-dot {
+
+        .connected .dot {
+
             background: #22c55e;
         }
 
-        .status-text {
-            font-size: 14px;
-        }
 
-        h2 {
-            font-size: 20px;
-            margin-bottom: 10px;
-        }
-
-        .description {
-            color: #94a3b8;
+        #statusText {
 
             font-size: 14px;
-
-            line-height: 1.6;
-
-            margin-bottom: 22px;
         }
 
-        .connect-button {
-            width: 100%;
 
-            border: none;
+        .account {
 
-            padding: 16px;
+            display: none;
 
-            border-radius: 14px;
-
-            background: #229ED9;
-
-            color: white;
-
-            font-size: 16px;
-            font-weight: bold;
-
-            cursor: pointer;
-
-            transition: 0.2s;
-        }
-
-        .connect-button:hover {
-            transform: translateY(-2px);
-
-            box-shadow:
-                0 10px 25px
-                rgba(34, 158, 217, 0.30);
-        }
-
-        .connect-button:disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-            transform: none;
-        }
-
-        .security {
             margin-top: 20px;
 
-            padding: 14px;
+            padding: 16px;
 
             border-radius: 14px;
 
@@ -212,6 +210,40 @@
                     94,
                     0.08
                 );
+        }
+
+
+        .account h3 {
+
+            margin-bottom: 10px;
+
+            color: #4ade80;
+        }
+
+
+        .account p {
+
+            color: #cbd5e1;
+
+            line-height: 1.7;
+        }
+
+
+        .notice {
+
+            margin-top: 20px;
+
+            padding: 16px;
+
+            border-radius: 14px;
+
+            background:
+                rgba(
+                    59,
+                    130,
+                    246,
+                    0.08
+                );
 
             color: #cbd5e1;
 
@@ -220,19 +252,22 @@
             line-height: 1.6;
         }
 
-        .security strong {
-            color: #4ade80;
+
+        .commands {
+
+            margin-top: 22px;
         }
 
-        .features {
-            margin-top: 25px;
+
+        .commands h3 {
+
+            margin-bottom: 12px;
         }
 
-        .feature {
-            display: flex;
-            gap: 12px;
 
-            padding: 12px 0;
+        .command {
+
+            padding: 11px 0;
 
             border-bottom:
                 1px solid
@@ -242,72 +277,44 @@
                     255,
                     0.07
                 );
+
+            color: #cbd5e1;
+
+            font-family: monospace;
         }
 
-        .feature:last-child {
+
+        .command:last-child {
+
             border-bottom: none;
         }
 
-        .feature-icon {
-            font-size: 20px;
-        }
-
-        .feature-title {
-            font-size: 14px;
-            font-weight: bold;
-        }
-
-        .feature-description {
-            color: #94a3b8;
-
-            font-size: 12px;
-
-            margin-top: 4px;
-
-            line-height: 1.4;
-        }
 
         .footer {
-            text-align: center;
 
-            margin-top: 20px;
+            text-align: center;
 
             color: #64748b;
 
             font-size: 12px;
+
+            margin-top: 20px;
         }
 
-        #message {
-            display: none;
-
-            margin-top: 16px;
-
-            padding: 13px;
-
-            border-radius: 12px;
-
-            background:
-                rgba(
-                    255,
-                    255,
-                    255,
-                    0.06
-                );
-
-            font-size: 13px;
-
-            line-height: 1.5;
-        }
     </style>
+
 </head>
+
 
 <body>
 
+
 <div class="container">
 
-    <div class="logo">
 
-        <div class="telegram-icon">
+    <div class="header">
+
+        <div class="icon">
             ✈
         </div>
 
@@ -315,312 +322,224 @@
             Telegram Username Tool
         </h1>
 
-        <p>
-            Connect your Telegram account,
-            then manage your usernames from
-            your Telegram control bot.
-        </p>
+        <div class="subtitle">
+
+            Manage usernames using your
+            connected Telegram account.
+
+        </div>
 
     </div>
 
 
     <div class="card">
 
+
         <div
             class="status"
             id="status"
         >
 
-            <div class="status-dot"></div>
+            <div class="dot"></div>
 
-            <div
-                class="status-text"
-                id="statusText"
-            >
-                Telegram account not connected
+            <div id="statusText">
+
+                Checking Telegram connection...
+
             </div>
 
         </div>
 
 
-        <h2>
-            Connect Telegram
-        </h2>
-
-        <p class="description">
-            Connect your Telegram account using
-            Telegram's authorization system.
-            After connection, return to your
-            Telegram bot and use the username
-            commands.
-        </p>
-
-
-        <button
-            class="connect-button"
-            id="connectButton"
-            onclick="connectTelegram()"
+        <div
+            class="account"
+            id="account"
         >
-            🔗 Connect Telegram
-        </button>
+
+            <h3>
+                Telegram Connected
+            </h3>
+
+            <p id="accountDetails">
+            </p>
+
+        </div>
 
 
-        <div id="message"></div>
+        <div class="notice">
 
-
-        <div class="security">
-
-            🔐 <strong>Security</strong>
+            🔐 Telegram authorization is performed
+            separately using <strong>login.py</strong>
+            on your trusted device.
 
             <br><br>
 
-            Your Telegram login code and
-            two-step-verification password should
-            never be entered into this page or
-            sent to the control bot.
+            This public website does not request
+            your Telegram login code or
+            two-step-verification password.
 
         </div>
 
 
-        <div class="features">
+        <div class="commands">
 
-            <div class="feature">
+            <h3>
+                Bot Commands
+            </h3>
 
-                <div class="feature-icon">
-                    🔎
-                </div>
-
-                <div>
-
-                    <div class="feature-title">
-                        Check usernames
-                    </div>
-
-                    <div class="feature-description">
-                        Use /createuser name from
-                        your Telegram bot.
-                    </div>
-
-                </div>
-
+            <div class="command">
+                /status
             </div>
 
-
-            <div class="feature">
-
-                <div class="feature-icon">
-                    👤
-                </div>
-
-                <div>
-
-                    <div class="feature-title">
-                        My usernames
-                    </div>
-
-                    <div class="feature-description">
-                        View usernames attached to
-                        your Telegram account.
-                    </div>
-
-                </div>
-
+            <div class="command">
+                /createuser simon
             </div>
 
+            <div class="command">
+                /myusernames
+            </div>
 
-            <div class="feature">
+            <div class="command">
+                /activate username
+            </div>
 
-                <div class="feature-icon">
-                    ⚡
-                </div>
+            <div class="command">
+                /deactivate username
+            </div>
 
-                <div>
+            <div class="command">
+                /reorder username1 username2
+            </div>
 
-                    <div class="feature-title">
-                        Username management
-                    </div>
-
-                    <div class="feature-description">
-                        Activate, deactivate and
-                        reorder usernames that
-                        belong to your account.
-                    </div>
-
-                </div>
-
+            <div class="command">
+                /history
             </div>
 
         </div>
+
 
     </div>
 
 
     <div class="footer">
+
         Personal Telegram Username Tool
+
     </div>
+
 
 </div>
 
 
 <script>
 
-    function showMessage(text) {
+async function checkStatus() {
 
-        const box =
-            document.getElementById(
-                "message"
+    const status =
+        document.getElementById(
+            "status"
+        );
+
+    const statusText =
+        document.getElementById(
+            "statusText"
+        );
+
+    const account =
+        document.getElementById(
+            "account"
+        );
+
+    const accountDetails =
+        document.getElementById(
+            "accountDetails"
+        );
+
+
+    try {
+
+        const response =
+            await fetch(
+                "/api/status",
+                {
+                    cache: "no-store"
+                }
             );
 
-        box.style.display = "block";
-        box.textContent = text;
+
+        const data =
+            await response.json();
+
+
+        if (data.connected === true) {
+
+            status.classList.add(
+                "connected"
+            );
+
+            statusText.textContent =
+                "Telegram account connected";
+
+            account.style.display =
+                "block";
+
+
+            let username = "None";
+
+
+            if (data.username) {
+
+                username =
+                    "@"
+                    + data.username;
+            }
+
+
+            accountDetails.innerHTML =
+                "Telegram ID: "
+                + data.id
+                + "<br>"
+                + "Username: "
+                + username;
+
+        }
+
+        else {
+
+            status.classList.remove(
+                "connected"
+            );
+
+            statusText.textContent =
+                "Telegram account not connected";
+
+            account.style.display =
+                "none";
+        }
+
+
     }
 
-
-    function setConnected() {
-
-        const status =
-            document.getElementById(
-                "status"
-            );
-
-        const statusText =
-            document.getElementById(
-                "statusText"
-            );
-
-        const button =
-            document.getElementById(
-                "connectButton"
-            );
-
-        status.classList.add(
-            "connected"
-        );
+    catch (error) {
 
         statusText.textContent =
-            "Telegram account connected";
-
-        button.textContent =
-            "✅ Connected";
-
-        button.disabled = true;
+            "Unable to check connection";
     }
 
-
-    async function checkStatus() {
-
-        try {
-
-            const response =
-                await fetch(
-                    "/api/status",
-                    {
-                        cache: "no-store"
-                    }
-                );
-
-            if (!response.ok) {
-                return;
-            }
-
-            const data =
-                await response.json();
-
-            if (data.connected === true) {
-
-                setConnected();
-            }
-
-        } catch (error) {
-
-            console.log(
-                "Status check unavailable."
-            );
-        }
-    }
+}
 
 
-    async function connectTelegram() {
-
-        const button =
-            document.getElementById(
-                "connectButton"
-            );
-
-        button.disabled = true;
-
-        button.textContent =
-            "Connecting...";
-
-        showMessage(
-            "Starting Telegram authorization..."
-        );
-
-        try {
-
-            const response =
-                await fetch(
-                    "/api/connect",
-                    {
-                        method: "POST"
-                    }
-                );
-
-            const data =
-                await response.json();
-
-            if (!response.ok) {
-
-                throw new Error(
-                    data.error ||
-                    "Unable to start connection."
-                );
-            }
+checkStatus();
 
 
-            if (data.connected === true) {
-
-                setConnected();
-
-                showMessage(
-                    "Telegram is already connected."
-                );
-
-                return;
-            }
-
-
-            if (data.authorization_url) {
-
-                window.location.href =
-                    data.authorization_url;
-
-                return;
-            }
-
-
-            showMessage(
-                "Telegram authorization started."
-            );
-
-
-        } catch (error) {
-
-            button.disabled = false;
-
-            button.textContent =
-                "🔗 Connect Telegram";
-
-            showMessage(
-                error.message
-            );
-        }
-    }
-
-
-    checkStatus();
+setInterval(
+    checkStatus,
+    10000
+);
 
 </script>
 
+
 </body>
-  </html>
+
+</html>
